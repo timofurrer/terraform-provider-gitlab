@@ -16,7 +16,7 @@ linter:
 
 provider:
   - '.go-version'
-  - 'gitlab/**/*'
+  - 'internal/**/*'
   - 'main.go'
 
 resource:
