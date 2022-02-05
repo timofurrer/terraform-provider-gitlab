@@ -905,7 +905,7 @@ func testAccCheckGitlabProjectArchivedOnDestroy(s *terraform.State) error {
 func testAccCheckAggregateGitlabProject(expected, received *gitlab.Project) resource.TestCheckFunc {
 	var checks []resource.TestCheckFunc
 
-	testResource := resourceGitlabProject()
+	testResource := allResources["gitlab_project"]()
 	expectedData := testResource.TestResourceData()
 	receivedData := testResource.TestResourceData()
 	for a, v := range testResource.Schema {
