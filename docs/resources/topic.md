@@ -41,7 +41,7 @@ resource "gitlab_topic" "functional_programming" {
 ### Optional
 
 - `avatar` (String) A local path to the avatar image to upload. **Note**: not available for imported resources.
-- `avatar_hash` (String) The hash of the avatar image. Use `filesha256("path/to/avatar.png")` whenever possible. **Note**: this is used to trigger an update of the avatar. If it's not given, but an avatar is given, the avatar will be updated each time.
+- `avatar_hash` (String) The hash of the avatar image. Use `filesha256("path/to/avatar.png")` whenever possible. **Note**: this is used to trigger an update of the avatar. If it's not given, but an avatar is given, the avatar will be updated each time. **Note**: not available for imported resources.
 - `description` (String) A text describing the topic.
 - `soft_destroy` (Boolean, Deprecated) Empty the topics fields instead of deleting it.
 - `title` (String) The topic's description. Requires at least GitLab 15.0 for which it's a required argument.

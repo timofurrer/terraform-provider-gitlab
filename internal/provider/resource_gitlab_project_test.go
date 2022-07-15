@@ -1042,6 +1042,154 @@ func TestAccGitlabProject_InstanceBranchProtectionDisabled(t *testing.T) {
 	})
 }
 
+func TestAccGitlabProject_Avatar(t *testing.T) {
+	testProjectName := acctest.RandomWithPrefix("acctest")
+
+	resource.Test(t, resource.TestCase{
+		ProviderFactories: providerFactories,
+		CheckDestroy:      testAccCheckGitlabProjectDestroy,
+		Steps: []resource.TestStep{
+			// Create Project with an Avatar
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name        = "%s"
+						avatar      = "${path.module}/testdata/gitlab_project/avatar.png"
+						avatar_hash = filesha256("${path.module}/testdata/gitlab_project/avatar.png")
+					}
+				`, testProjectName),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttrSet("gitlab_project.this", "avatar_url"),
+					resource.TestCheckResourceAttr("gitlab_project.this", "avatar_hash", "8d29d9c393facb9d86314eb347a03fde503f2c0422bf55af7df086deb126107e"),
+				),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme", "avatar", "avatar_hash"},
+			},
+			// Change Avatar of Project
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name        = "%s"
+						avatar      = "${path.module}/testdata/gitlab_project/avatar-update.png"
+						avatar_hash = filesha256("${path.module}/testdata/gitlab_project/avatar-update.png")
+					}
+				`, testProjectName),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttrSet("gitlab_project.this", "avatar_url"),
+					resource.TestCheckResourceAttr("gitlab_project.this", "avatar_hash", "a58bd926fd3baabd41c56e810f62ade8705d18a4e280fb35764edb4b778444db"),
+				),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme", "avatar", "avatar_hash"},
+			},
+			// Remove Avatar from Project
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name = "%s"
+					}
+				`, testProjectName),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("gitlab_project.this", "avatar_url", ""),
+					resource.TestCheckResourceAttr("gitlab_project.this", "avatar_hash", ""),
+				),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme", "avatar", "avatar_hash"},
+			},
+			// Upload Avatar for Project
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name        = "%s"
+						avatar      = "${path.module}/testdata/gitlab_project/avatar.png"
+						avatar_hash = filesha256("${path.module}/testdata/gitlab_project/avatar.png")
+					}
+				`, testProjectName),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttrSet("gitlab_project.this", "avatar_url"),
+					resource.TestCheckResourceAttr("gitlab_project.this", "avatar_hash", "8d29d9c393facb9d86314eb347a03fde503f2c0422bf55af7df086deb126107e"),
+				),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme", "avatar", "avatar_hash"},
+			},
+			// Remove Avatar from Project again
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name = "%s"
+					}
+				`, testProjectName),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("gitlab_project.this", "avatar_url", ""),
+					resource.TestCheckResourceAttr("gitlab_project.this", "avatar_hash", ""),
+				),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme", "avatar", "avatar_hash"},
+			},
+			// Upload Avatar for Project without specifying the avatar hash
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name        = "%s"
+						avatar      = "${path.module}/testdata/gitlab_project/avatar.png"
+					}
+				`, testProjectName),
+				ExpectNonEmptyPlan: true,
+				Check:              resource.TestCheckResourceAttrSet("gitlab_project.this", "avatar_url"),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme", "avatar", "avatar_hash"},
+			},
+			// Check that avatar is re-uploaded because no avatar hash is specified
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name        = "%s"
+						avatar      = "${path.module}/testdata/gitlab_project/avatar.png"
+					}
+				`, testProjectName),
+				ExpectNonEmptyPlan: true,
+				Check:              resource.TestCheckResourceAttrSet("gitlab_project.this", "avatar_url"),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme", "avatar", "avatar_hash"},
+			},
+		},
+	})
+}
+
 type testAccGitlabProjectMirroredExpectedAttributes struct {
 	Mirror                           bool
 	MirrorTriggerBuilds              bool

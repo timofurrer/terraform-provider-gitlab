@@ -671,25 +671,30 @@ branch using a ` + "`DELETE`" + ` request. Then define the desired branch protec
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext,
 		},
-		Schema: constructSchema(resourceGitLabProjectSchema, map[string]*schema.Schema{
-			"skip_wait_for_default_branch_protection": {
-				Description: `If ` + "`true`" + `, the default behavior to wait for the default branch protection to be created is skipped.
-This is necessary if the current user is not an admin and the default branch protection is disabled on an instance-level.
-There is currently no known way to determine if the default branch protection is disabled on an instance-level for non-admin users.
-This attribute is only used during resource creation, thus changes are suppressed and the attribute cannot be imported.
-`,
-				Type:     schema.TypeBool,
-				Optional: true,
-				DiffSuppressFunc: func(string, string, string, *schema.ResourceData) bool {
-					return true
+		Schema: constructSchema(
+			resourceGitLabProjectSchema,
+			getAvatarSchema(),
+			map[string]*schema.Schema{
+				"skip_wait_for_default_branch_protection": {
+					Description: `If ` + "`true`" + `, the default behavior to wait for the default branch protection to be created is skipped.
+	This is necessary if the current user is not an admin and the default branch protection is disabled on an instance-level.
+	There is currently no known way to determine if the default branch protection is disabled on an instance-level for non-admin users.
+	This attribute is only used during resource creation, thus changes are suppressed and the attribute cannot be imported.
+	`,
+					Type:     schema.TypeBool,
+					Optional: true,
+					DiffSuppressFunc: func(string, string, string, *schema.ResourceData) bool {
+						return true
+					},
 				},
 			},
-		}),
+		),
 		CustomizeDiff: customdiff.All(
 			customdiff.ComputedIf("path_with_namespace", namespaceOrPathChanged),
 			customdiff.ComputedIf("ssh_url_to_repo", namespaceOrPathChanged),
 			customdiff.ComputedIf("http_url_to_repo", namespaceOrPathChanged),
 			customdiff.ComputedIf("web_url", namespaceOrPathChanged),
+			avatarDiff,
 		),
 	}
 })
@@ -780,6 +785,7 @@ func resourceGitlabProjectSetToState(ctx context.Context, client *gitlab.Client,
 	d.Set("build_coverage_regex", project.BuildCoverageRegex)
 
 	d.Set("ci_default_git_depth", project.CIDefaultGitDepth)
+	d.Set("avatar_url", project.AvatarURL)
 
 	return nil
 }
@@ -996,6 +1002,17 @@ func resourceGitlabProjectCreate(ctx context.Context, d *schema.ResourceData, me
 	} else if supportsSquashOption {
 		if v, ok := d.GetOk("squash_option"); ok {
 			options.SquashOption = stringToSquashOptionValue(v.(string))
+		}
+	}
+
+	avatar, err := createAvatar(d)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+	if avatar != nil {
+		options.Avatar = &gitlab.ProjectAvatar{
+			Filename: avatar.Filename,
+			Image:    avatar.Image,
 		}
 	}
 
@@ -1527,6 +1544,17 @@ func resourceGitlabProjectUpdate(ctx context.Context, d *schema.ResourceData, me
 
 	if d.HasChange("ci_default_git_depth") {
 		options.CIDefaultGitDepth = gitlab.Int(d.Get("ci_default_git_depth").(int))
+	}
+
+	avatar, err := updateAvatar(d)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+	if avatar != nil {
+		options.Avatar = &gitlab.ProjectAvatar{
+			Filename: avatar.Filename,
+			Image:    avatar.Image,
+		}
 	}
 
 	if *options != (gitlab.EditProjectOptions{}) {
