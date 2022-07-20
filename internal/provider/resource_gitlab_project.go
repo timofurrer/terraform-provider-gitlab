@@ -1,9 +1,11 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -595,6 +597,115 @@ var resourceGitLabProjectSchema = map[string]*schema.Schema{
 		Optional:    true,
 		Computed:    true,
 	},
+	"protected_branch": {
+		Description: "The list of protected branches for the project.",
+		Type:        schema.TypeList,
+		Optional:    true,
+		Computed:    true,
+		Elem:        schemaProtectedBranch(),
+		// DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
+		// 	log.Printf("[DEBUG] DiffSuppressFunc for %s old:%q new:%q", k, old, new)
+		// 	return false
+		// },
+	},
+}
+
+func schemaProtectedBranch() *schema.Resource {
+	return &schema.Resource{
+		Schema: map[string]*schema.Schema{
+			"id": {
+				Description: "The ID of the branch protection (not the branch name).",
+				Type:        schema.TypeInt,
+				Computed:    true,
+			},
+			"branch": {
+				Description: "Name of the branch.",
+				Type:        schema.TypeString,
+				Required:    true,
+			},
+			"merge_access_level": {
+				Description:      fmt.Sprintf("Access levels allowed to merge. Valid values are: %s.", renderValueListForDocs(validProtectedBranchTagAccessLevelNames)),
+				Type:             schema.TypeString,
+				ValidateDiagFunc: validation.ToDiagFunc(validation.StringInSlice(validProtectedBranchTagAccessLevelNames, false)),
+				Optional:         true,
+				Computed:         true,
+			},
+			"push_access_level": {
+				Description:      fmt.Sprintf("Access levels allowed to push. Valid values are: %s.", renderValueListForDocs(validProtectedBranchTagAccessLevelNames)),
+				Type:             schema.TypeString,
+				ValidateDiagFunc: validation.ToDiagFunc(validation.StringInSlice(validProtectedBranchTagAccessLevelNames, false)),
+				Optional:         true,
+				Computed:         true,
+			},
+			"unprotect_access_level": {
+				Description:      fmt.Sprintf("Access levels allowed to unprotect. Valid values are: %s.", renderValueListForDocs(validProtectedBranchUnprotectAccessLevelNames)),
+				Type:             schema.TypeString,
+				ValidateDiagFunc: validation.ToDiagFunc(validation.StringInSlice(validProtectedBranchUnprotectAccessLevelNames, false)),
+				Optional:         true,
+				Computed:         true,
+			},
+			"allow_force_push": {
+				Description: "Can be set to true to allow users with push access to force push.",
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Computed:    true,
+			},
+			"allowed_to_push": {
+				Description: "Defines permissions for action.",
+				Type:        schema.TypeSet,
+				Optional:    true,
+				Computed:    true,
+				Elem:        protectedBranchAllowedToSchema(),
+			},
+			"allowed_to_merge": {
+				Description: "Defines permissions for action.",
+				Type:        schema.TypeSet,
+				Optional:    true,
+				Computed:    true,
+				Elem:        protectedBranchAllowedToSchema(),
+			},
+			"allowed_to_unprotect": {
+				Description: "Defines permissions for action.",
+				Type:        schema.TypeSet,
+				Optional:    true,
+				Computed:    true,
+				Elem:        protectedBranchAllowedToSchema(),
+			},
+			"code_owner_approval_required": {
+				Description: "Can be set to true to require code owner approval before merging.",
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Computed:    true,
+			},
+		},
+	}
+}
+
+func protectedBranchAllowedToSchema() *schema.Resource {
+	return &schema.Resource{
+		Schema: map[string]*schema.Schema{
+			"access_level": {
+				Description: "Level of access.",
+				Type:        schema.TypeString,
+				Computed:    true,
+			},
+			"access_level_description": {
+				Description: "Readable description of level of access.",
+				Type:        schema.TypeString,
+				Computed:    true,
+			},
+			"user_id": {
+				Description: "The ID of a GitLab user allowed to perform the relevant action. Mutually exclusive with `group_id`.",
+				Type:        schema.TypeInt,
+				Optional:    true,
+			},
+			"group_id": {
+				Description: "The ID of a GitLab group allowed to perform the relevant action. Mutually exclusive with `user_id`.",
+				Type:        schema.TypeInt,
+				Optional:    true,
+			},
+		},
+	}
 }
 
 var validContainerExpirationPolicyAttributesCadenceValues = []string{
@@ -690,6 +801,82 @@ This attribute is only used during resource creation, thus changes are suppresse
 			customdiff.ComputedIf("ssh_url_to_repo", namespaceOrPathChanged),
 			customdiff.ComputedIf("http_url_to_repo", namespaceOrPathChanged),
 			customdiff.ComputedIf("web_url", namespaceOrPathChanged),
+			func(ctx context.Context, rd *schema.ResourceDiff, i interface{}) error {
+				if !rd.HasChange("protected_branch") {
+					return nil
+				}
+
+				log.Printf("[DEBUG] changed keys: %#v", rd.GetChangedKeysPrefix("protected_branch"))
+
+				type reorderChange struct {
+					oldBranch, newBranch string
+					oldKey, newKey       string
+					oldConfig            interface{}
+				}
+
+				var nameExp = regexp.MustCompile(`(protected_branch\.\d+)\.branch`)
+
+				// oldBranchKeys := make(map[string]string)
+				// for _, changedKey := range rd.GetChangedKeysPrefix("protected_branch") {
+				// 	if m := nameExp.FindStringSubmatch(changedKey); m != nil {
+				// 		oldBranch, newBranch := rd.GetChange(changedKey)
+				// 	}
+				// }
+
+				branchToKey := make(map[string]reorderChange)
+				for _, changedKey := range rd.GetChangedKeysPrefix("protected_branch") {
+					if m := nameExp.FindStringSubmatch(changedKey); m != nil {
+						oldBranch, newBranch := rd.GetChange(changedKey)
+						branchToKey[newBranch.(string)] = reorderChange{
+							oldBranch: oldBranch.(string),
+							newBranch: newBranch.(string),
+							newKey:    m[1],
+						}
+					}
+				}
+				log.Printf("[DEBUG] branchToKey: %#v", branchToKey)
+
+				type change struct {
+					key      string
+					old, new map[string]interface{}
+				}
+
+				o, n := rd.GetChange("protected_branch")
+				vals := make(map[string]*change)
+				for _, raw := range o.([]interface{}) {
+					obj := raw.(map[string]interface{})
+					k := obj["branch"].(string)
+					vals[k] = &change{old: obj}
+				}
+				for _, raw := range n.([]interface{}) {
+					obj := raw.(map[string]interface{})
+					k := obj["branch"].(string)
+					if _, ok := vals[k]; !ok {
+						vals[k] = &change{}
+					}
+					vals[k].new = obj
+				}
+
+				for name, config := range vals {
+					// we have a planned change for a protected branch
+					if config.old != nil && config.new != nil {
+
+						var bufOld, bufNew bytes.Buffer
+						schema.SerializeResourceForHash(&bufOld, config.old, schemaProtectedBranch())
+						schema.SerializeResourceForHash(&bufNew, config.new, schemaProtectedBranch())
+
+						if bytes.Equal(bufOld.Bytes(), bufNew.Bytes()) {
+							rc := branchToKey[name]
+							key := branchToKey[rc.oldBranch].newKey
+							log.Printf("[DEBUG] customizing the diff of %s (key:%q, %q) to match its config %+v because it was just a re-order. If that wasn't the case, please create an upstream issue", rc.oldBranch, key, rc.newKey, config.new)
+							log.Printf("[DEBUG] rd.SetNew(%s, %s)", key+".branch", config.new["branch"])
+							rd.SetNew(key+".branch", config.new["branch"])
+						}
+					}
+				}
+
+				return nil
+			},
 		),
 	}
 })
@@ -1210,6 +1397,63 @@ func resourceGitlabProjectCreate(ctx context.Context, d *schema.ResourceData, me
 		}
 	}
 
+	if v, ok := d.GetOk("protected_branch"); ok {
+		for i, rawProtectedBranchConfig := range v.([]interface{}) {
+			protectedBranchConfig := rawProtectedBranchConfig.(map[string]interface{})
+			branchName := protectedBranchConfig["branch"].(string)
+
+			// Check if the protected branch already exists - this may happen depending on the default branch protection settings
+			// In case it already exists, it's unprotected and protected with the new settings.
+			if _, _, err := client.ProtectedBranches.GetProtectedBranch(project.ID, branchName, gitlab.WithContext(ctx)); err == nil {
+				if _, err := client.ProtectedBranches.UnprotectRepositoryBranches(project.ID, branchName, gitlab.WithContext(ctx)); err != nil {
+					return diag.Errorf("failed to unprotect branch %q in project %q (id: %d) to protect it again: %v", branchName, project.PathWithNamespace, project.ID, err)
+				}
+			}
+
+			gitlabAccessLevelValue := func(accessLevel gitlab.AccessLevelValue) *gitlab.AccessLevelValue {
+				return &accessLevel
+			}
+
+			protectedBranchOptions := gitlab.ProtectRepositoryBranchesOptions{
+				Name: gitlab.String(branchName),
+			}
+
+			if v, ok := d.GetOk(fmt.Sprintf("protected_branch.%d.merge_access_level", i)); ok {
+				protectedBranchOptions.MergeAccessLevel = gitlabAccessLevelValue(accessLevelNameToValue[v.(string)])
+			}
+			if v, ok := d.GetOk(fmt.Sprintf("protected_branch.%d.push_access_level", i)); ok {
+				protectedBranchOptions.PushAccessLevel = gitlabAccessLevelValue(accessLevelNameToValue[v.(string)])
+			}
+			if v, ok := d.GetOk(fmt.Sprintf("protected_branch.%d.unprotect_access_level", i)); ok {
+				protectedBranchOptions.UnprotectAccessLevel = gitlabAccessLevelValue(accessLevelNameToValue[v.(string)])
+			}
+			if v, ok := d.GetOk(fmt.Sprintf("protected_branch.%d.code_owner_approval_required", i)); ok {
+				protectedBranchOptions.CodeOwnerApprovalRequired = gitlab.Bool(v.(bool))
+			}
+			if v, ok := d.GetOk(fmt.Sprintf("protected_branch.%d.allow_force_push", i)); ok {
+				protectedBranchOptions.AllowForcePush = gitlab.Bool(v.(bool))
+			}
+			if v, ok := d.GetOk(fmt.Sprintf("protected_branch.%d.allowed_to_push", i)); ok {
+				branchPermissionOptions := expandBranchPermissionOptions(v.(*schema.Set).List())
+				protectedBranchOptions.AllowedToPush = &branchPermissionOptions
+			}
+			if v, ok := d.GetOk(fmt.Sprintf("protected_branch.%d.allowed_to_merge", i)); ok {
+				branchPermissionOptions := expandBranchPermissionOptions(v.(*schema.Set).List())
+				protectedBranchOptions.AllowedToMerge = &branchPermissionOptions
+			}
+			if v, ok := d.GetOk(fmt.Sprintf("protected_branch.%d.allowed_to_unprotect", i)); ok {
+				branchPermissionOptions := expandBranchPermissionOptions(v.(*schema.Set).List())
+				protectedBranchOptions.AllowedToUnprotect = &branchPermissionOptions
+			}
+
+			log.Printf("[DEBUG] Protecting branch %q in project %q (id: %d)", branchName, project.PathWithNamespace, project.ID)
+			_, _, err := client.ProtectedBranches.ProtectRepositoryBranches(d.Id(), &protectedBranchOptions, gitlab.WithContext(ctx))
+			if err != nil {
+				return diag.Errorf("failed to protect branch %q in project %q (id: %d): %v", protectedBranchConfig["name"], project.PathWithNamespace, project.ID, err)
+			}
+		}
+	}
+
 	return resourceGitlabProjectRead(ctx, d, meta)
 }
 
@@ -1247,6 +1491,16 @@ func resourceGitlabProjectRead(ctx context.Context, d *schema.ResourceData, meta
 
 	if err := d.Set("push_rules", flattenProjectPushRules(pushRules)); err != nil {
 		return diag.FromErr(err)
+	}
+
+	// TODO: handle pagination!
+	protectedBranches, _, err := client.ProtectedBranches.ListProtectedBranches(project.ID, nil, gitlab.WithContext(ctx))
+	if err != nil {
+		return diag.Errorf("failed to fetch protected branches for project %q (id: %d): %v", project.PathWithNamespace, project.ID, err)
+	}
+
+	if err := d.Set("protected_branch", flattenProjectBranchProtections(protectedBranches)); err != nil {
+		return diag.Errorf("failed to set protected branches for project %q (id: %d) to state: %v", project.PathWithNamespace, project.ID, err)
 	}
 	return nil
 }
@@ -1568,6 +1822,128 @@ func resourceGitlabProjectUpdate(ctx context.Context, d *schema.ResourceData, me
 		}
 	}
 
+	if d.HasChange("protected_branch") {
+		get := d.Get("protected_branch").([]interface{})
+		log.Printf("PROTECTED: get: %v+", get)
+		old, new := d.GetChange("protected_branch")
+		log.Printf("PROTECTED: old: %v+", old)
+		log.Printf("PROTECTED: new: %v+", new)
+
+		type Change struct {
+			old, new map[string]interface{}
+		}
+
+		o, n := d.GetChange("protected_branch")
+		vals := make(map[string]*Change)
+		for _, raw := range o.([]interface{}) {
+			obj := raw.(map[string]interface{})
+			k := obj["branch"].(string)
+			vals[k] = &Change{old: obj}
+		}
+		for _, raw := range n.([]interface{}) {
+			obj := raw.(map[string]interface{})
+			k := obj["branch"].(string)
+			if _, ok := vals[k]; !ok {
+				vals[k] = &Change{}
+			}
+			vals[k].new = obj
+		}
+		gitlabAccessLevelValue := func(accessLevel gitlab.AccessLevelValue) *gitlab.AccessLevelValue {
+			return &accessLevel
+		}
+
+		protect := func(name string, state map[string]interface{}) error {
+			protectedBranchOptions := gitlab.ProtectRepositoryBranchesOptions{
+				Name: gitlab.String(name),
+			}
+
+			// NOTE: we currently don't have a way to determine if these `*_access_level` attributes
+			//       have been set in the config or have been defaulted.
+			//       Unfortunately, we loose the state key field after the `GetChange()` call.
+			//       For these fields this is a problem, because the empty type value is `0`
+			//       which is an invalid value here and results in a `403 FORBIDDEN` error.
+			if v := accessLevelNameToValue[state["merge_access_level"].(string)]; v != 0 {
+				protectedBranchOptions.MergeAccessLevel = gitlabAccessLevelValue(v)
+			}
+			if v := accessLevelNameToValue[state["push_access_level"].(string)]; v != 0 {
+				protectedBranchOptions.PushAccessLevel = gitlabAccessLevelValue(v)
+			}
+
+			if v := accessLevelNameToValue[state["unprotect_access_level"].(string)]; v != 0 {
+				protectedBranchOptions.UnprotectAccessLevel = gitlabAccessLevelValue(v)
+			}
+
+			// NOTE: same story as above, however the defaults for both fields are `false` and valid upstream API values.
+			protectedBranchOptions.CodeOwnerApprovalRequired = gitlab.Bool(state["code_owner_approval_required"].(bool))
+			protectedBranchOptions.AllowForcePush = gitlab.Bool(state["allow_force_push"].(bool))
+
+			// NOTE: same story here.
+			if v := expandBranchPermissionOptions(state["allowed_to_push"].(*schema.Set).List()); len(v) > 0 {
+				protectedBranchOptions.AllowedToPush = &v
+			}
+			if v := expandBranchPermissionOptions(state["allowed_to_merge"].(*schema.Set).List()); len(v) > 0 {
+				protectedBranchOptions.AllowedToMerge = &v
+			}
+			if v := expandBranchPermissionOptions(state["allowed_to_unprotect"].(*schema.Set).List()); len(v) > 0 {
+				protectedBranchOptions.AllowedToUnprotect = &v
+			}
+
+			log.Printf("[DEBUG] Protecting branch %q in project %s", name, d.Id())
+			_, _, err := client.ProtectedBranches.ProtectRepositoryBranches(d.Id(), &protectedBranchOptions, gitlab.WithContext(ctx))
+			if err != nil {
+				return fmt.Errorf("failed to protect branch %q in project %s: %v", name, d.Id(), err)
+			}
+			return nil
+		}
+
+		if len(vals) == 0 {
+			log.Printf("[DEBUG] No protected branches to update in project %s after all. This may be an issue with the Terraform planning for the protected_branch sub-resource", d.Id())
+		}
+
+		for name, change := range vals {
+			// A few different situations to deal with in here:
+			// - change.Old is nil: create a new role
+			// - change.New is nil: remove an existing role
+			// - both are set: test if New is different than Old and update if not
+
+			if change.old == nil {
+				log.Printf("[DEBUG] creating protected branch %q", name)
+				if err := protect(name, change.new); err != nil {
+					return diag.FromErr(err)
+				}
+				continue
+			}
+
+			if change.new == nil {
+				log.Printf("[DEBUG] Unprotecting branch %q in project %s", name, d.Id())
+				if _, err := client.ProtectedBranches.UnprotectRepositoryBranches(d.Id(), name, gitlab.WithContext(ctx)); err != nil {
+					return diag.Errorf("failed to unprotect branch %q in project %s: %v", name, d.Id(), err)
+				}
+				continue
+			}
+
+			// TODO: MAYBE??
+			// if reflect.DeepEqual(change.Old, change.New) {
+			var bufOld, bufNew bytes.Buffer
+			schema.SerializeResourceForHash(&bufOld, change.old, schemaProtectedBranch())
+			schema.SerializeResourceForHash(&bufNew, change.new, schemaProtectedBranch())
+
+			if !bytes.Equal(bufOld.Bytes(), bufNew.Bytes()) {
+				log.Printf("[DEBUG] updating protected branch %q", name)
+
+				if _, err := client.ProtectedBranches.UnprotectRepositoryBranches(d.Id(), name, gitlab.WithContext(ctx)); err != nil {
+					return diag.Errorf("failed to unprotect branch %q in project %s: %v", name, d.Id(), err)
+				}
+
+				if err := protect(name, change.new); err != nil {
+					return diag.FromErr(err)
+				}
+			} else {
+				log.Printf("[DEBUG] the config is equal, so we don't need to update the protected branch settings for %q", name)
+			}
+		}
+	}
+
 	return resourceGitlabProjectRead(ctx, d, meta)
 }
 
@@ -1796,6 +2172,52 @@ func flattenContainerExpirationPolicy(policy *gitlab.ContainerExpirationPolicy) 
 	if policy.NextRunAt != nil {
 		values[0]["next_run_at"] = policy.NextRunAt.Format(time.RFC3339)
 	}
+	return values
+}
+
+func flattenProjectBranchProtections(protectedBranches []*gitlab.ProtectedBranch) []map[string]interface{} {
+	values := make([]map[string]interface{}, len(protectedBranches))
+	log.Printf("DEBUG: setting %d protected branches: %v+", len(protectedBranches), protectedBranches)
+	for i, protectedBranch := range protectedBranches {
+		values[i] = flattenProjectBranchProtection(protectedBranch)
+	}
+	log.Printf("DEBUG: setting %d protected branches, state: %v+", len(values), values)
+	return values
+}
+
+func flattenProjectBranchProtection(protectedBranch *gitlab.ProtectedBranch) map[string]interface{} {
+	if protectedBranch == nil {
+		return map[string]interface{}{}
+	}
+
+	values := map[string]interface{}{
+		"id":                           protectedBranch.ID,
+		"branch":                       protectedBranch.Name,
+		"allow_force_push":             protectedBranch.AllowForcePush,
+		"allowed_to_push":              flattenNonZeroBranchAccessDescriptions(protectedBranch.PushAccessLevels),
+		"allowed_to_merge":             flattenNonZeroBranchAccessDescriptions(protectedBranch.MergeAccessLevels),
+		"allowed_to_unprotect":         flattenNonZeroBranchAccessDescriptions(protectedBranch.UnprotectAccessLevels),
+		"code_owner_approval_required": protectedBranch.CodeOwnerApprovalRequired,
+	}
+
+	if pushAccessLevel, err := firstValidAccessLevel(protectedBranch.PushAccessLevels); err == nil {
+		values["push_access_level"] = accessLevelValueToName[*pushAccessLevel]
+	} else {
+		values["push_access_level"] = nil
+	}
+
+	if mergeAccessLevels, err := firstValidAccessLevel(protectedBranch.MergeAccessLevels); err == nil {
+		values["merge_access_level"] = accessLevelValueToName[*mergeAccessLevels]
+	} else {
+		values["merge_access_level"] = nil
+	}
+
+	if unprotectAccessLevels, err := firstValidAccessLevel(protectedBranch.UnprotectAccessLevels); err == nil {
+		values["unprotect_access_level"] = accessLevelValueToName[*unprotectAccessLevels]
+	} else {
+		values["unprotect_access_level"] = nil
+	}
+
 	return values
 }
 

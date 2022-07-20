@@ -27,3 +27,23 @@ resource "gitlab_project" "peters_repo" {
   description  = "This is a description"
   namespace_id = data.gitlab_user.peter_parker.namespace_id
 }
+
+resource "gitlab_project" "protected" {
+  name                   = "protected-example"
+  description            = "This repository has some branches protected"
+  default_branch         = "main"
+  initialize_with_readme = true
+
+  // Protected branches
+  protected_branch {
+    branch             = "main"
+    merge_access_level = "developer"
+    push_access_level  = "developer"
+  }
+
+  protected_branch {
+    branch             = "release"
+    merge_access_level = "maintainer"
+    push_access_level  = "maintainer"
+  }
+}

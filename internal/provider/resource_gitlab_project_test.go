@@ -1042,6 +1042,314 @@ func TestAccGitlabProject_InstanceBranchProtectionDisabled(t *testing.T) {
 	})
 }
 
+func TestAccGitlabProject_BranchProtection(t *testing.T) {
+	testProjectName := acctest.RandomWithPrefix("acctest")
+
+	resource.Test(t, resource.TestCase{
+		ProviderFactories: providerFactories,
+		CheckDestroy:      testAccCheckGitlabProjectDestroy,
+		Steps: []resource.TestStep{
+			// Project creation with explicit default branch + default branch protection settings + initialize_with_readme
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name                   = "%s"
+						description            = "This repository has some branches protected"
+						visibility_level       = "public"
+						default_branch         = "main"
+						initialize_with_readme = true
+
+						// Protected branches
+						protected_branch {
+							branch             = "main"
+							merge_access_level = "maintainer"
+							push_access_level  = "maintainer"
+						}
+					}
+				`, testProjectName),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme"},
+			},
+			// Force a destroy for the project so that it can be recreated as the same resource
+			{
+				Config: ` `, // requires a space for empty config
+			},
+			// Project creation with explicit default branch + non-default branch protection settings + initialize_with_readme
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name                   = "%s"
+						description            = "This repository has some branches protected"
+						visibility_level       = "public"
+						default_branch         = "main"
+						initialize_with_readme = true
+
+						// Protected branches
+						protected_branch {
+							branch             = "main"
+							merge_access_level = "developer"
+							push_access_level  = "developer"
+						}
+					}
+				`, testProjectName),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme"},
+			},
+			// Update project to add a second protected branch
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name                   = "%s"
+						description            = "This repository has some branches protected"
+						visibility_level       = "public"
+						default_branch         = "main"
+						initialize_with_readme = true
+
+						// Protected branches
+						protected_branch {
+							branch             = "main"
+							merge_access_level = "developer"
+							push_access_level  = "developer"
+						}
+
+						protected_branch {
+							branch             = "release"
+							merge_access_level = "maintainer"
+							push_access_level  = "maintainer"
+						}
+					}
+				`, testProjectName),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme"},
+			},
+			// Update project to remove the second protected branch
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name                   = "%s"
+						description            = "This repository has some branches protected"
+						visibility_level       = "public"
+						default_branch         = "main"
+						initialize_with_readme = true
+
+						// Protected branches
+						protected_branch {
+							branch             = "main"
+							merge_access_level = "developer"
+							push_access_level  = "developer"
+						}
+					}
+				`, testProjectName),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme"},
+			},
+			// Update project to change the branch protections settings
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name                   = "%s"
+						description            = "This repository has some branches protected"
+						visibility_level       = "public"
+						default_branch         = "main"
+						initialize_with_readme = true
+
+						// Protected branches
+						protected_branch {
+							branch             = "main"
+							merge_access_level = "developer"
+							push_access_level  = "maintainer"
+						}
+					}
+				`, testProjectName),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme"},
+			},
+			// Update project to change the single protected branch (basically a name change which should lead to a complete new branch protection and the old one removed)
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name                   = "%s"
+						description            = "This repository has some branches protected"
+						visibility_level       = "public"
+						default_branch         = "main"
+						initialize_with_readme = true
+
+						// Protected branches
+						protected_branch {
+							branch             = "release"
+							merge_access_level = "developer"
+							push_access_level  = "maintainer"
+						}
+					}
+				`, testProjectName),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme"},
+			},
+			// Force a destroy for the project so that it can be recreated as the same resource
+			{
+				Config: ` `, // requires a space for empty config
+			},
+			// Create project with multiple protected branches
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name                   = "%s"
+						description            = "This repository has some branches protected"
+						visibility_level       = "public"
+						default_branch         = "main"
+						initialize_with_readme = true
+
+						// Protected branches
+						protected_branch {
+							branch             = "main"
+							merge_access_level = "maintainer"
+							push_access_level  = "maintainer"
+						}
+
+						protected_branch {
+							branch             = "release"
+							merge_access_level = "developer"
+							push_access_level  = "developer"
+						}
+					}
+				`, testProjectName),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme"},
+			},
+			// Update project by removing the first protected branch in the list
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name                   = "%s"
+						description            = "This repository has some branches protected"
+						visibility_level       = "public"
+						default_branch         = "main"
+						initialize_with_readme = true
+
+						// Protected branches
+						protected_branch {
+							branch             = "release"
+							merge_access_level = "developer"
+							push_access_level  = "developer"
+						}
+					}
+				`, testProjectName),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme"},
+			},
+			// Force a destroy for the project so that it can be recreated as the same resource
+			{
+				Config: ` `, // requires a space for empty config
+			},
+			// Create project with multiple protected branches
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name                   = "%s"
+						description            = "This repository has some branches protected"
+						visibility_level       = "public"
+						default_branch         = "main"
+						initialize_with_readme = true
+
+						// Protected branches
+						protected_branch {
+							branch             = "main"
+							merge_access_level = "maintainer"
+							push_access_level  = "maintainer"
+						}
+
+						protected_branch {
+							branch             = "release"
+							merge_access_level = "developer"
+							push_access_level  = "developer"
+						}
+					}
+				`, testProjectName),
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme"},
+			},
+			// Re-order the protected branches should result in an empty plan
+			{
+				Config: fmt.Sprintf(`
+					resource "gitlab_project" "this" {
+						name                   = "%s"
+						description            = "This repository has some branches protected"
+						visibility_level       = "public"
+						default_branch         = "main"
+						initialize_with_readme = true
+
+						// Protected branches
+						protected_branch {
+							branch             = "release"
+							merge_access_level = "developer"
+							push_access_level  = "developer"
+						}
+
+						protected_branch {
+							branch             = "main"
+							merge_access_level = "maintainer"
+							push_access_level  = "maintainer"
+						}
+					}
+				`, testProjectName),
+				// PlanOnly: true,
+			},
+			// Verify Import
+			{
+				ResourceName:            "gitlab_project.this",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"initialize_with_readme"},
+			},
+		},
+	})
+}
+
 type testAccGitlabProjectMirroredExpectedAttributes struct {
 	Mirror                           bool
 	MirrorTriggerBuilds              bool
